@@ -6,14 +6,24 @@
 //
 
 import SwiftUI
+import Charts
+
+struct Point : Identifiable {
+    let x: Float
+    let y: Float
+    
+    var id: Int { x.hashValue }
+}
 
 struct ContentView: View {
+    let points = [Point](arrayLiteral: Point(x: 0, y: 1), Point(x: 1, y: 2), Point(x: 2, y: 3))
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Chart (points) { point in
+            LineMark(
+                x: .value("Time", point.x),
+                y: .value("Value", point.y)
+            )
         }
         .padding()
     }
