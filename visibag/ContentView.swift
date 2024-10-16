@@ -79,12 +79,13 @@ struct ZoomingOverlay : View {
     
     func extendedRange(start: Double, end: Double) -> (Double, Double){
         let (low, high) = (min(start, end), max(start, end))
-        return (extend(val: low, type: .Lower), extend(val: high, type: .Upper))
+        let delta = high - low
+        return (extend(val: low, delta: delta, type: .Lower), extend(val: high, delta: delta, type: .Upper))
     }
     
-    func extend(val: Double, type: BoundType) -> Double {
+    func extend(val: Double, delta: Double, type: BoundType) -> Double {
         let shouldReduce = ((type == .Lower) && (val >= 0.0)) || ((type == .Upper) && (val <= 0.0))
-        return shouldReduce ? val * 0.9 : val * 1.1
+        return shouldReduce ? val - (delta * 0.1) : val + (delta * 0.1)
     }
 }
 
@@ -120,12 +121,10 @@ struct ContentView: View {
     var body: some View {
         Chart (data) { series in
             ForEach (series.series) { point in
-                if horizontalDomain.contains(point.x) {
                 LineMark(
                     x: .value("Time", point.x),
                     y: .value("Value", point.y)
                 )
-                }
             }
             .foregroundStyle(by: .value("Name", series.name))
             .interpolationMethod(.stepEnd)
@@ -136,6 +135,14 @@ struct ContentView: View {
         .chartXAxisLabel("Time")
         .chartOverlay { proxy in
             ZoomingOverlay(proxy: proxy, bounds: $bounds)
+        }
+        .navigationTitle("Visibag")
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button("Reset Zoom") {
+                    bounds.removeAll()
+                }
+            }
         }
         .padding()
     }
