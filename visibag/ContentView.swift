@@ -79,13 +79,8 @@ struct ZoomingOverlay : View {
     
     func extendedRange(start: Double, end: Double) -> (Double, Double){
         let (low, high) = (min(start, end), max(start, end))
-        let delta = high - low
-        return (extend(val: low, delta: delta, type: .Lower), extend(val: high, delta: delta, type: .Upper))
-    }
-    
-    func extend(val: Double, delta: Double, type: BoundType) -> Double {
-        let shouldReduce = ((type == .Lower) && (val >= 0.0)) || ((type == .Upper) && (val <= 0.0))
-        return shouldReduce ? val - (delta * 0.1) : val + (delta * 0.1)
+        let delta = (high - low) * 0.1
+        return ((low - delta), (high + delta))
     }
 }
 
