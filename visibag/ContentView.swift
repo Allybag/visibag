@@ -112,15 +112,29 @@ struct ContentView: View {
     }
     
     var body: some View {
-        Chart (message.data.elements, id: \.key) { (name, series) in
-            ForEach (series) { point in
-                LineMark(
-                    x: .value("Time", point.x),
-                    y: .value("Value", point.y)
-                )
+        Chart {
+            ForEach(message.data.elements, id: \.key) { name, series in
+                ForEach (series) { point in
+                    LineMark(
+                        x: .value("Time", point.x),
+                        y: .value("Value", point.y)
+                    )
+                    .foregroundStyle(by: .value("Name", name))
+                }
+                .interpolationMethod(.stepEnd)
             }
-            .foregroundStyle(by: .value("Name", name))
-            .interpolationMethod(.stepEnd)
+            
+            ForEach(message.events) { event in
+                PointMark(
+                    x: .value("Time", event.point.x),
+                    y: .value("Value", event.point.y)
+                )
+                .symbol {
+                    event.direction == 0 ?
+                    Image(systemName: "arrow.down").foregroundColor(.red) :
+                    Image(systemName: "arrow.up").foregroundColor(.yellow)
+                }
+            }
         }
         .chartYScale(domain: verticalDomain)
         .chartXScale(domain: horizontalDomain)
