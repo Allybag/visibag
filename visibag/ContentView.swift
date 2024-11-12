@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Charts
+import OrderedCollections
 
 struct Point : Codable, Identifiable {
     let x: Double
@@ -21,21 +22,21 @@ struct Point : Codable, Identifiable {
     }
 }
 
+struct Event: Codable, Identifiable {
+    let point: Point
+    let direction: Int
+    let orderSize: Int
+    let fillSize: Int
+    
+    var id: Int { point.id } // Not really a legit ID
+}
 
 struct Message: Codable, Identifiable {
     let key: String
-    let data: Dictionary<String, [Point]>
-    let events: [String]
+    let data: OrderedDictionary<String, [Point]>
+    let events: [Event]
     
     var id: Int { key.hashValue }
-}
-
-struct NamedSeries : Identifiable
-{
-    let name: String
-    let series: [Point]
-
-    var id : Int { name.hashValue }
 }
 
 enum AxisType {
@@ -85,24 +86,21 @@ struct ZoomingOverlay : View {
 }
 
 struct ContentView: View {
-    var data: [NamedSeries] {
+    var message: Message {
+        let noData = OrderedDictionary<String, [Point]>()
         do {
             let messages = try JSONDecoder().decode([Message].self, from: Data(json.utf8))
             if let message = messages.first {
-                var result = [NamedSeries]()
-                for (key, value) in message.data {
-                    result.append(NamedSeries(name: key, series: value))
-                }
-                return result
+                return message
             }
-            return []
+            return Message(key: "Unknown", data: noData, events:[])
         }
         catch
         {
             print("Unexpected error: \(error).")
         }
 
-        return []
+        return Message(key: "Unknown", data: noData, events:[])
     }
     
     var horizontalDomain: ClosedRange<Double> {
@@ -114,14 +112,14 @@ struct ContentView: View {
     }
     
     var body: some View {
-        Chart (data) { series in
-            ForEach (series.series) { point in
+        Chart (message.data.elements, id: \.key) { (name, series) in
+            ForEach (series) { point in
                 LineMark(
                     x: .value("Time", point.x),
                     y: .value("Value", point.y)
                 )
             }
-            .foregroundStyle(by: .value("Name", series.name))
+            .foregroundStyle(by: .value("Name", name))
             .interpolationMethod(.stepEnd)
         }
         .chartYScale(domain: verticalDomain)
@@ -147,8 +145,8 @@ struct ContentView: View {
     func domain(axis: AxisType) -> ClosedRange<Double> {
         var (min, max) = bounds[axis] ?? (nil, nil)
         if min == nil || max == nil {
-            for (series) in data {
-                for point in series.series {
+            for (_, series) in message.data {
+                for point in series {
                     let val = (axis == .Horizontal) ? point.x : point.y
                     if min == nil || val < min! { min = val }
                     if max == nil || val > max! { max = val }

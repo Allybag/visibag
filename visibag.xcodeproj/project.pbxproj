@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		410699912CE2D98900292761 /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 410699902CE2D98900292761 /* OrderedCollections */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		41099DCB2CB0C31B003268D3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				410699912CE2D98900292761 /* OrderedCollections in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -72,12 +77,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		4106998F2CE2D98900292761 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		41099DB02CB0C31B003268D3 = {
 			isa = PBXGroup;
 			children = (
 				41099DBB2CB0C31B003268D3 /* visibag */,
 				41099DCD2CB0C31B003268D3 /* visibagTests */,
 				41099DD72CB0C31B003268D3 /* visibagUITests */,
+				4106998F2CE2D98900292761 /* Frameworks */,
 				41099DBA2CB0C31B003268D3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,6 +125,7 @@
 			);
 			name = visibag;
 			packageProductDependencies = (
+				410699902CE2D98900292761 /* OrderedCollections */,
 			);
 			productName = visibag;
 			productReference = 41099DB92CB0C31B003268D3 /* visibag.app */;
@@ -195,6 +209,9 @@
 			);
 			mainGroup = 41099DB02CB0C31B003268D3;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				41A052952CE2D5B800FAA3E3 /* XCRemoteSwiftPackageReference "swift-collections" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 41099DBA2CB0C31B003268D3 /* Products */;
 			projectDirPath = "";
@@ -591,6 +608,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		41A052952CE2D5B800FAA3E3 /* XCRemoteSwiftPackageReference "swift-collections" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-collections.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.1.4;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		410699902CE2D98900292761 /* OrderedCollections */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 41A052952CE2D5B800FAA3E3 /* XCRemoteSwiftPackageReference "swift-collections" */;
+			productName = OrderedCollections;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 41099DB12CB0C31B003268D3 /* Project object */;
 }
