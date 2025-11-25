@@ -8,6 +8,7 @@
 import SwiftUI
 import Charts
 import OrderedCollections
+import UniformTypeIdentifiers
 
 struct Point : Codable, Identifiable {
     let x: Double
@@ -24,10 +25,9 @@ struct Point : Codable, Identifiable {
 
 struct Event: Codable, Identifiable {
     let point: Point
-    let direction: Int
+    let side: String
     let orderSize: Int
-    let fillSize: Int
-    
+
     var id: Int { point.id } // Not really a legit ID
 }
 
@@ -35,7 +35,7 @@ struct Message: Codable, Identifiable {
     let key: String
     let data: OrderedDictionary<String, [Point]>
     let events: [Event]
-    
+
     var id: Int { key.hashValue }
 }
 
@@ -62,7 +62,7 @@ struct ZoomingOverlay : View {
                             let (endX, endY) = coords(location: value.location, origin: origin)
                             print("Restricting horizontal axis to \(startX):\(endX)")
                             print("Restricting vertical axis to \(startY):\(endY)")
-                            
+
                             let (lowX, highX) = extendedRange(start: startX, end: endX)
                             let (lowY, highY) = extendedRange(start: startY, end: endY)
 
@@ -72,12 +72,12 @@ struct ZoomingOverlay : View {
                 )
         }
     }
-    
+
     func coords(location: CGPoint, origin: CGPoint) -> (Double, Double) {
         let location = CGPoint(x: location.x - origin.x, y: location.y - origin.y)
         return proxy.value(at: location) ?? (0.0, 0.0)
     }
-    
+
     func extendedRange(start: Double, end: Double) -> (Double, Double){
         let (low, high) = (min(start, end), max(start, end))
         let delta = (high - low) * 0.1
@@ -86,77 +86,123 @@ struct ZoomingOverlay : View {
 }
 
 struct ContentView: View {
-    var message: Message {
-        let noData = OrderedDictionary<String, [Point]>()
-        do {
-            let messages = try JSONDecoder().decode([Message].self, from: Data(json.utf8))
-            if let message = messages.first {
-                return message
-            }
-            return Message(key: "Unknown", data: noData, events:[])
-        }
-        catch
-        {
-            print("Unexpected error: \(error).")
-        }
+    @State private var message: Message?
+    @State private var isImporting: Bool = false
+    @State private var bounds: Dictionary<AxisType, (Double?, Double?)> = Dictionary()
 
-        return Message(key: "Unknown", data: noData, events:[])
-    }
-    
     var horizontalDomain: ClosedRange<Double> {
         return domain(axis: .Horizontal)
     }
-    
+
     var verticalDomain: ClosedRange<Double> {
         return domain(axis: .Vertical)
     }
-    
+
     var body: some View {
-        Chart {
-            ForEach(message.data.elements, id: \.key) { name, series in
-                ForEach (series) { point in
-                    LineMark(
-                        x: .value("Time", point.x),
-                        y: .value("Value", point.y)
-                    )
-                    .foregroundStyle(by: .value("Name", name))
+        VStack {
+            if let message = message {
+                Chart {
+                    ForEach(message.data.elements, id: \.key) { name, series in
+                        ForEach (series) { point in
+                            LineMark(
+                                x: .value("Time", point.x),
+                                y: .value("Value", point.y)
+                            )
+                            .foregroundStyle(by: .value("Name", name))
+                        }
+                        .interpolationMethod(.stepEnd)
+                    }
+
+                    ForEach(message.events) { event in
+                        PointMark(
+                            x: .value("Time", event.point.x),
+                            y: .value("Value", event.point.y)
+                        )
+                        .symbol {
+                            event.side == "BACK" ?
+                            Image(systemName: "arrow.down").foregroundColor(.red) :
+                            Image(systemName: "arrow.up").foregroundColor(.yellow)
+                        }
+                    }
                 }
-                .interpolationMethod(.stepEnd)
-            }
-            
-            ForEach(message.events) { event in
-                PointMark(
-                    x: .value("Time", event.point.x),
-                    y: .value("Value", event.point.y)
-                )
-                .symbol {
-                    event.direction == 0 ?
-                    Image(systemName: "arrow.down").foregroundColor(.red) :
-                    Image(systemName: "arrow.up").foregroundColor(.yellow)
+                .chartYScale(domain: verticalDomain)
+                .chartXScale(domain: horizontalDomain)
+                .chartYAxisLabel("Price")
+                .chartXAxisLabel("Time")
+                .chartOverlay { proxy in
+                    ZoomingOverlay(proxy: proxy, bounds: $bounds)
+                }
+            } else {
+                if #available(iOS 17.0, macOS 14.0, *) {
+                    ContentUnavailableView("No Data", systemImage: "chart.xyaxis.line", description: Text("Import a JSON file to view the market data."))
+                } else {
+                    VStack(spacing: 20) {
+                        Image(systemName: "chart.xyaxis.line")
+                            .font(.system(size: 48))
+                            .foregroundColor(.secondary)
+                        Text("No Data")
+                            .font(.title2)
+                            .bold()
+                        Text("Import a JSON file to view the market data.")
+                            .foregroundColor(.secondary)
+                        Button("Import Data") {
+                            isImporting = true
+                        }
+                    }
                 }
             }
-        }
-        .chartYScale(domain: verticalDomain)
-        .chartXScale(domain: horizontalDomain)
-        .chartYAxisLabel("Price")
-        .chartXAxisLabel("Time")
-        .chartOverlay { proxy in
-            ZoomingOverlay(proxy: proxy, bounds: $bounds)
         }
         .navigationTitle("Visibag")
         .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Button("Reset Zoom") {
-                    bounds.removeAll()
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: { isImporting = true }) {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+            }
+            if message != nil {
+                ToolbarItem(placement: .automatic) {
+                    Button("Reset Zoom") {
+                        bounds.removeAll()
+                    }
                 }
             }
         }
         .padding()
+        .fileImporter(
+            isPresented: $isImporting,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                loadData(from: url)
+            case .failure(let error):
+                print("Error importing file: \(error.localizedDescription)")
+            }
+        }
     }
-    
-    @State var bounds: Dictionary<AxisType, (Double?, Double?)> = Dictionary()
-    
+
+    func loadData(from url: URL) {
+        guard url.startAccessingSecurityScopedResource() else {
+            print("Access denied")
+            return
+        }
+        defer { url.stopAccessingSecurityScopedResource() }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let decodedMessage = try JSONDecoder().decode(Message.self, from: data)
+            self.message = decodedMessage
+            self.bounds.removeAll()
+        } catch {
+            print("Error decoding: \(error)")
+        }
+    }
+
     func domain(axis: AxisType) -> ClosedRange<Double> {
+        guard let message = message else { return 0...1 }
+
         var (min, max) = bounds[axis] ?? (nil, nil)
         if min == nil || max == nil {
             for (_, series) in message.data {
@@ -167,7 +213,10 @@ struct ContentView: View {
                 }
             }
         }
-        return min!...max!
+        // Fallback if min/max still nil (empty data)
+        let safeMin = min ?? 0.0
+        let safeMax = max ?? 1.0
+        return safeMin...safeMax
     }
 }
 
