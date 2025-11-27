@@ -61,23 +61,53 @@ struct Message: Decodable, Identifiable {
 struct ZoomingOverlay: View {
     let proxy: ChartProxy
     let onZoom: (Double, Double, Double, Double) -> Void
+    
+    @State private var dragStart: CGPoint?
+    @State private var dragCurrent: CGPoint?
 
     var body: some View {
         GeometryReader { geometry in
-            Rectangle().fill(.clear).contentShape(Rectangle())
-                .gesture(
-                    DragGesture()
-                        .onEnded { value in
-                            let origin = geometry[proxy.plotFrame!].origin
-                            let (startX, startY) = coords(location: value.startLocation, origin: origin)
-                            let (endX, endY) = coords(location: value.location, origin: origin)
-                            
-                            let (lowX, highX) = extendedRange(start: startX, end: endX)
-                            let (lowY, highY) = extendedRange(start: startY, end: endY)
-                            
-                            onZoom(lowX, highX, lowY, highY)
-                        }
-                )
+            ZStack {
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 5)
+                            .onChanged { value in
+                                dragStart = value.startLocation
+                                dragCurrent = value.location
+                            }
+                            .onEnded { value in
+                                let origin = geometry[proxy.plotFrame!].origin
+                                let (startX, startY) = coords(location: value.startLocation, origin: origin)
+                                let (endX, endY) = coords(location: value.location, origin: origin)
+                                
+                                let (lowX, highX) = extendedRange(start: startX, end: endX)
+                                let (lowY, highY) = extendedRange(start: startY, end: endY)
+                                
+                                onZoom(lowX, highX, lowY, highY)
+                                
+                                dragStart = nil
+                                dragCurrent = nil
+                            }
+                    )
+                
+                if let start = dragStart, let current = dragCurrent {
+                    let rect = CGRect(
+                        x: min(start.x, current.x),
+                        y: min(start.y, current.y),
+                        width: abs(current.x - start.x),
+                        height: abs(current.y - start.y)
+                    )
+                    
+                    Rectangle()
+                        .fill(Color.blue.opacity(0.15))
+                        .overlay(
+                            Rectangle()
+                                .stroke(Color.blue.opacity(0.6), lineWidth: 1)
+                        )
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                }
+            }
         }
     }
 
