@@ -184,6 +184,39 @@ struct LegendView: View {
     }
 }
 
+func seriesSuffix(from seriesName: String) -> String {
+    let components = seriesName.components(separatedBy: " ")
+    return components.dropFirst().joined(separator: " ")
+}
+
+func suffixOrder(for chartGroup: ChartGroup, suffix: String) -> Int {
+    let allSuffixes = Array(Set(chartGroup.data.keys.map { seriesSuffix(from: $0) })).sorted()
+    return allSuffixes.firstIndex(of: suffix) ?? 0
+}
+
+struct LineStyles {
+    private static let styles: [String: StrokeStyle] = [
+        "Back": StrokeStyle(lineWidth: 2),
+        "Lay": StrokeStyle(lineWidth: 2, dash: [5, 3]),
+        "Distance": StrokeStyle(lineWidth: 2),
+        "Speed": StrokeStyle(lineWidth: 2),
+    ]
+    
+    private static let fallbackStyles: [StrokeStyle] = [
+        StrokeStyle(lineWidth: 2),
+        StrokeStyle(lineWidth: 2, dash: [5, 3]),
+        StrokeStyle(lineWidth: 2, dash: [2, 2]),
+        StrokeStyle(lineWidth: 2, dash: [8, 4, 2, 4]),
+    ]
+    
+    static func style(for suffix: String, index: Int) -> StrokeStyle {
+        if let known = styles[suffix] {
+            return known
+        }
+        return fallbackStyles[index % fallbackStyles.count]
+    }
+}
+
 struct SingleChartView: View {
     let chartGroup: ChartGroup
     let events: [Event]
@@ -230,6 +263,9 @@ struct SingleChartView: View {
             Chart {
                 ForEach(filteredData, id: \.name) { name, series in
                     let key = partialKey(from: name)
+                    let suffix = seriesSuffix(from: name)
+                    let suffixIndex = suffixOrder(for: chartGroup, suffix: suffix)
+                    
                     ForEach(series) { point in
                         LineMark(
                             x: .value("Time", point.x),
@@ -237,6 +273,7 @@ struct SingleChartView: View {
                             series: .value("Series", name)
                         )
                         .foregroundStyle(by: .value("Key", key))
+                        .lineStyle(LineStyles.style(for: suffix, index: suffixIndex))
                     }
                     .interpolationMethod(.stepEnd)
                 }
