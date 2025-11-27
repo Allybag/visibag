@@ -378,30 +378,35 @@ struct ContentView: View {
             print("Access denied")
             return
         }
-        defer { url.stopAccessingSecurityScopedResource() }
 
-        do {
-            let data = try Data(contentsOf: url)
-            let decodedMessage = try JSONDecoder().decode(Message.self, from: data)
-            
-            // Collect all partial keys
-            var allKeys = Set<String>()
-            for chart in decodedMessage.charts {
-                for name in chart.data.keys {
-                    allKeys.insert(partialKey(from: name))
+        Task.detached(priority: .userInitiated) {
+            defer { url.stopAccessingSecurityScopedResource() }
+
+            do {
+                let data = try Data(contentsOf: url)
+                let decodedMessage = try JSONDecoder().decode(Message.self, from: data)
+
+                // Collect all partial keys
+                var allKeys = Set<String>()
+                for chart in decodedMessage.charts {
+                    for name in chart.data.keys {
+                        allKeys.insert(partialKey(from: name))
+                    }
                 }
+
+                // Update UI on main thread
+                await MainActor.run {
+                    self.horizontalBounds = (nil, nil)
+                    self.verticalBoundsPerChart.removeAll()
+                    self.partialKeyColors = PartialKeyColors()
+                    self.partialKeyColors.buildColors(for: allKeys.sorted())
+                    self.enabledPartialKeys = allKeys
+                    self.message = decodedMessage
+                }
+
+            } catch {
+                print("Error decoding: \(error)")
             }
-            
-            // Reset state
-            self.horizontalBounds = (nil, nil)
-            self.verticalBoundsPerChart.removeAll()
-            self.partialKeyColors = PartialKeyColors()
-            self.partialKeyColors.buildColors(for: allKeys.sorted())
-            self.enabledPartialKeys = allKeys
-            self.message = decodedMessage
-            
-        } catch {
-            print("Error decoding: \(error)")
         }
     }
 }
