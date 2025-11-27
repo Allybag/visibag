@@ -24,7 +24,7 @@ struct Event: Codable, Identifiable {
     var id: Int { point.id }
 }
 
-struct ChartGroup: Codable, Identifiable {
+struct ChartGroup: Decodable, Identifiable {
     let name: String
     let data: [String: [Point]]
     
@@ -46,7 +46,7 @@ struct Message: Decodable, Identifiable {
         if container.contains(.charts) {
             self.charts = try container.decode([ChartGroup].self, forKey: .charts)
         } else if container.contains(.data) {
-            let data = try container.decode(Dictionary<String, [Point]>.self, forKey: .data)
+            let data = try container.decode([String: [Point]].self, forKey: .data)
             self.charts = [ChartGroup(name: "Default", data: data)]
         } else {
             self.charts = []
@@ -55,6 +55,35 @@ struct Message: Decodable, Identifiable {
     
     private enum CodingKeys: String, CodingKey {
         case key, charts, data, events
+    }
+}
+
+func partialKey(from seriesName: String) -> String {
+    seriesName.components(separatedBy: " ").first ?? seriesName
+}
+
+struct PartialKeyColors {
+    private var colorMap: [String: Color] = [:]
+    
+    private let palette: [Color] = [
+        .blue, .red, .green, .orange, .purple,
+        .cyan, .pink, .yellow, .mint, .indigo,
+        .brown, .teal
+    ]
+    
+    mutating func buildColors(for keys: [String]) {
+        colorMap.removeAll()
+        for (index, key) in keys.enumerated() {
+            colorMap[key] = palette[index % palette.count]
+        }
+    }
+    
+    func color(for key: String) -> Color {
+        colorMap[key] ?? .gray
+    }
+    
+    var allKeys: [String] {
+        Array(colorMap.keys).sorted()
     }
 }
 
@@ -123,19 +152,61 @@ struct ZoomingOverlay: View {
     }
 }
 
+struct LegendView: View {
+    let partialKeys: [String]
+    @Binding var enabledKeys: Set<String>
+    let colorForKey: (String) -> Color
+    
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 16) {
+                ForEach(partialKeys, id: \.self) { key in
+                    Button {
+                        if enabledKeys.contains(key) {
+                            enabledKeys.remove(key)
+                        } else {
+                            enabledKeys.insert(key)
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: enabledKeys.contains(key) ? "checkmark.square.fill" : "square")
+                                .foregroundColor(colorForKey(key))
+                            Text(key)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
 struct SingleChartView: View {
     let chartGroup: ChartGroup
     let events: [Event]
     let horizontalDomain: ClosedRange<Double>
     let verticalBounds: (Double?, Double?)
+    let enabledKeys: Set<String>
+    let colorForKey: (String) -> Color
+    let allPartialKeys: [String]
     let onZoom: (Double, Double, Double, Double) -> Void
+    
+    var filteredData: [(name: String, series: [Point])] {
+        chartGroup.data.keys.sorted().compactMap { name in
+            let key = partialKey(from: name)
+            guard enabledKeys.contains(key) else { return nil }
+            return (name: name, series: chartGroup.data[name]!)
+        }
+    }
     
     var verticalDomain: ClosedRange<Double> {
         var (min, max) = verticalBounds
         if min == nil || max == nil {
-            for (_, series) in chartGroup.data {
+            for (_, series) in filteredData {
                 for point in series {
-                    // Only consider points within the visible horizontal range
                     guard point.x >= horizontalDomain.lowerBound && point.x <= horizontalDomain.upperBound else {
                         continue
                     }
@@ -157,13 +228,15 @@ struct SingleChartView: View {
                 .foregroundColor(.secondary)
             
             Chart {
-                ForEach(chartGroup.data.keys.sorted(), id: \.self) { name in let series = chartGroup.data[name]!
+                ForEach(filteredData, id: \.name) { name, series in
+                    let key = partialKey(from: name)
                     ForEach(series) { point in
                         LineMark(
                             x: .value("Time", point.x),
-                            y: .value("Value", point.y)
+                            y: .value("Value", point.y),
+                            series: .value("Series", name)
                         )
-                        .foregroundStyle(by: .value("Name", name))
+                        .foregroundStyle(by: .value("Key", key))
                     }
                     .interpolationMethod(.stepEnd)
                 }
@@ -183,6 +256,8 @@ struct SingleChartView: View {
             .chartYScale(domain: verticalDomain)
             .chartXScale(domain: horizontalDomain)
             .chartYAxisLabel(chartGroup.name)
+            .chartLegend(.hidden)
+            .chartForegroundStyleScale(domain: allPartialKeys, range: allPartialKeys.map { colorForKey($0) })
             .chartOverlay { proxy in
                 ZoomingOverlay(proxy: proxy, onZoom: onZoom)
             }
@@ -195,6 +270,8 @@ struct ContentView: View {
     @State private var isImporting: Bool = false
     @State private var horizontalBounds: (Double?, Double?) = (nil, nil)
     @State private var verticalBoundsPerChart: [String: (Double?, Double?)] = [:]
+    @State private var partialKeyColors = PartialKeyColors()
+    @State private var enabledPartialKeys: Set<String> = []
 
     var horizontalDomain: ClosedRange<Double> {
         guard let message = message else { return 0...1 }
@@ -202,7 +279,8 @@ struct ContentView: View {
         var (min, max) = horizontalBounds
         if min == nil || max == nil {
             for chart in message.charts {
-                for (_, series) in chart.data {
+                for (name, series) in chart.data {
+                    guard enabledPartialKeys.contains(partialKey(from: name)) else { continue }
                     for point in series {
                         if min == nil || point.x < min! { min = point.x }
                         if max == nil || point.x > max! { max = point.x }
@@ -212,10 +290,22 @@ struct ContentView: View {
         }
         return (min ?? 0.0)...(max ?? 1.0)
     }
+    
+    var allPartialKeys: [String] {
+        partialKeyColors.allKeys
+    }
 
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             if let message = message {
+                LegendView(
+                    partialKeys: allPartialKeys,
+                    enabledKeys: $enabledPartialKeys,
+                    colorForKey: { partialKeyColors.color(for: $0) }
+                )
+                
+                Divider()
+                
                 ScrollView {
                     VStack(spacing: 20) {
                         ForEach(Array(message.charts.enumerated()), id: \.element.id) { index, chartGroup in
@@ -226,6 +316,9 @@ struct ContentView: View {
                                 events: chartEvents,
                                 horizontalDomain: horizontalDomain,
                                 verticalBounds: verticalBoundsPerChart[chartGroup.name] ?? (nil, nil),
+                                enabledKeys: enabledPartialKeys,
+                                colorForKey: { partialKeyColors.color(for: $0) },
+                                allPartialKeys: allPartialKeys,
                                 onZoom: { lowX, highX, lowY, highY in
                                     horizontalBounds = (lowX, highX)
                                     verticalBoundsPerChart[chartGroup.name] = (lowY, highY)
@@ -298,13 +391,23 @@ struct ContentView: View {
         do {
             let data = try Data(contentsOf: url)
             let decodedMessage = try JSONDecoder().decode(Message.self, from: data)
-            print("Loaded \(decodedMessage.charts.count) charts:")
+            
+            // Collect all partial keys
+            var allKeys = Set<String>()
             for chart in decodedMessage.charts {
-                print("  - '\(chart.name)' with \(chart.data.count) series")
+                for name in chart.data.keys {
+                    allKeys.insert(partialKey(from: name))
+                }
             }
-            self.message = decodedMessage
+            
+            // Reset state
             self.horizontalBounds = (nil, nil)
             self.verticalBoundsPerChart.removeAll()
+            self.partialKeyColors = PartialKeyColors()
+            self.partialKeyColors.buildColors(for: allKeys.sorted())
+            self.enabledPartialKeys = allKeys
+            self.message = decodedMessage
+            
         } catch {
             print("Error decoding: \(error)")
         }
