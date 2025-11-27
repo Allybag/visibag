@@ -405,6 +405,18 @@ struct ContentView: View {
                 }
             }
             if message != nil {
+                if cursorX != nil {
+                    ToolbarItem(placement: .automatic) {
+                        Button("Cut Left") {
+                            horizontalBounds.0 = cursorX
+                        }
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Button("Cut Right") {
+                            horizontalBounds.1 = cursorX
+                        }
+                    }
+                }
                 ToolbarItem(placement: .automatic) {
                     Button("Reset") {
                         horizontalBounds = (nil, nil)
