@@ -35,27 +35,8 @@ struct Message: Decodable, Identifiable {
     let key: String
     let charts: [ChartGroup]
     let events: [Event]
-    
+
     var id: Int { key.hashValue }
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        key = try container.decode(String.self, forKey: .key)
-        events = try container.decodeIfPresent([Event].self, forKey: .events) ?? []
-        
-        if container.contains(.charts) {
-            self.charts = try container.decode([ChartGroup].self, forKey: .charts)
-        } else if container.contains(.data) {
-            let data = try container.decode([String: [Point]].self, forKey: .data)
-            self.charts = [ChartGroup(name: "Default", data: data)]
-        } else {
-            self.charts = []
-        }
-    }
-    
-    private enum CodingKeys: String, CodingKey {
-        case key, charts, data, events
-    }
 }
 
 func partialKey(from seriesName: String) -> String {
@@ -195,25 +176,15 @@ func suffixOrder(for chartGroup: ChartGroup, suffix: String) -> Int {
 }
 
 struct LineStyles {
-    private static let styles: [String: StrokeStyle] = [
-        "Back": StrokeStyle(lineWidth: 2),
-        "Lay": StrokeStyle(lineWidth: 2, dash: [5, 3]),
-        "Distance": StrokeStyle(lineWidth: 2),
-        "Speed": StrokeStyle(lineWidth: 2),
-    ]
-    
-    private static let fallbackStyles: [StrokeStyle] = [
+    private static let styles: [StrokeStyle] = [
         StrokeStyle(lineWidth: 2),
         StrokeStyle(lineWidth: 2, dash: [5, 3]),
         StrokeStyle(lineWidth: 2, dash: [2, 2]),
         StrokeStyle(lineWidth: 2, dash: [8, 4, 2, 4]),
     ]
-    
-    static func style(for suffix: String, index: Int) -> StrokeStyle {
-        if let known = styles[suffix] {
-            return known
-        }
-        return fallbackStyles[index % fallbackStyles.count]
+
+    static func style(for index: Int) -> StrokeStyle {
+        styles[index % styles.count]
     }
 }
 
@@ -273,7 +244,7 @@ struct SingleChartView: View {
                             series: .value("Series", name)
                         )
                         .foregroundStyle(by: .value("Key", key))
-                        .lineStyle(LineStyles.style(for: suffix, index: suffixIndex))
+                        .lineStyle(LineStyles.style(for: suffixIndex))
                     }
                     .interpolationMethod(.stepEnd)
                 }
@@ -367,23 +338,7 @@ struct ContentView: View {
                     .padding()
                 }
             } else {
-                if #available(iOS 17.0, macOS 14.0, *) {
-                    ContentUnavailableView("No Data", systemImage: "chart.xyaxis.line", description: Text("Import a JSON file to view the market data."))
-                } else {
-                    VStack(spacing: 20) {
-                        Image(systemName: "chart.xyaxis.line")
-                            .font(.system(size: 48))
-                            .foregroundColor(.secondary)
-                        Text("No Data")
-                            .font(.title2)
-                            .bold()
-                        Text("Import a JSON file to view the market data.")
-                            .foregroundColor(.secondary)
-                        Button("Import Data") {
-                            isImporting = true
-                        }
-                    }
-                }
+                ContentUnavailableView("No Data", systemImage: "chart.xyaxis.line", description: Text("Import a JSON file to view the market data."))
             }
         }
         .navigationTitle("Visibag")
