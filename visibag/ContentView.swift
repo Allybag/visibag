@@ -1,19 +1,11 @@
-//
-//  ContentView.swift
-//  visibag
-//
-//  Created by Alex A on 4/10/2024.
-//
-
 import SwiftUI
 import Charts
 import OrderedCollections
 import UniformTypeIdentifiers
 
-struct Point : Codable, Identifiable {
+struct Point: Codable, Identifiable {
     let x: Double
     let y: Double
-
     var id: Int { x.hashValue }
 
     init(from decoder: Decoder) throws {
@@ -27,29 +19,48 @@ struct Event: Codable, Identifiable {
     let point: Point
     let side: String
     let orderSize: Int
-
-    var id: Int { point.id } // Not really a legit ID
+    var chartIndex: Int?
+    
+    var id: Int { point.id }
 }
 
-struct Message: Codable, Identifiable {
+struct ChartGroup: Codable, Identifiable {
+    let name: String
+    let data: [String: [Point]]
+    
+    var id: String { name }
+}
+
+struct Message: Decodable, Identifiable {
     let key: String
-    let data: OrderedDictionary<String, [Point]>
+    let charts: [ChartGroup]
     let events: [Event]
-
+    
     var id: Int { key.hashValue }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = try container.decode(String.self, forKey: .key)
+        events = try container.decodeIfPresent([Event].self, forKey: .events) ?? []
+        
+        if container.contains(.charts) {
+            self.charts = try container.decode([ChartGroup].self, forKey: .charts)
+        } else if container.contains(.data) {
+            let data = try container.decode(Dictionary<String, [Point]>.self, forKey: .data)
+            self.charts = [ChartGroup(name: "Default", data: data)]
+        } else {
+            self.charts = []
+        }
+    }
+    
+    private enum CodingKeys: String, CodingKey {
+        case key, charts, data, events
+    }
 }
 
-enum AxisType {
-    case Horizontal, Vertical
-}
-
-enum BoundType {
-    case Lower, Upper
-}
-
-struct ZoomingOverlay : View {
+struct ZoomingOverlay: View {
     let proxy: ChartProxy
-    @Binding var bounds: Dictionary<AxisType, (Double?, Double?)>
+    let onZoom: (Double, Double, Double, Double) -> Void
 
     var body: some View {
         GeometryReader { geometry in
@@ -60,14 +71,11 @@ struct ZoomingOverlay : View {
                             let origin = geometry[proxy.plotFrame!].origin
                             let (startX, startY) = coords(location: value.startLocation, origin: origin)
                             let (endX, endY) = coords(location: value.location, origin: origin)
-                            print("Restricting horizontal axis to \(startX):\(endX)")
-                            print("Restricting vertical axis to \(startY):\(endY)")
-
+                            
                             let (lowX, highX) = extendedRange(start: startX, end: endX)
                             let (lowY, highY) = extendedRange(start: startY, end: endY)
-
-                            bounds[.Horizontal] = extendedRange(start: lowX, end: highX)
-                            bounds[.Vertical] = extendedRange(start: lowY, end: highY)
+                            
+                            onZoom(lowX, highX, lowY, highY)
                         }
                 )
         }
@@ -78,59 +86,120 @@ struct ZoomingOverlay : View {
         return proxy.value(at: location) ?? (0.0, 0.0)
     }
 
-    func extendedRange(start: Double, end: Double) -> (Double, Double){
+    func extendedRange(start: Double, end: Double) -> (Double, Double) {
         let (low, high) = (min(start, end), max(start, end))
         let delta = (high - low) * 0.1
-        return ((low - delta), (high + delta))
+        return (low - delta, high + delta)
+    }
+}
+
+struct SingleChartView: View {
+    let chartGroup: ChartGroup
+    let events: [Event]
+    let horizontalDomain: ClosedRange<Double>
+    let verticalBounds: (Double?, Double?)
+    let onZoom: (Double, Double, Double, Double) -> Void
+    
+    var verticalDomain: ClosedRange<Double> {
+        var (min, max) = verticalBounds
+        if min == nil || max == nil {
+            for (_, series) in chartGroup.data {
+                for point in series {
+                    if min == nil || point.y < min! { min = point.y }
+                    if max == nil || point.y > max! { max = point.y }
+                }
+            }
+        }
+        let safeMin = min ?? 0.0
+        let safeMax = max ?? 1.0
+        return safeMin...safeMax
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(chartGroup.name)
+                .font(.headline)
+                .foregroundColor(.secondary)
+            
+            Chart {
+                ForEach(chartGroup.data.keys.sorted(), id: \.self) { name in let series = chartGroup.data[name]!
+                    ForEach(series) { point in
+                        LineMark(
+                            x: .value("Time", point.x),
+                            y: .value("Value", point.y)
+                        )
+                        .foregroundStyle(by: .value("Name", name))
+                    }
+                    .interpolationMethod(.stepEnd)
+                }
+                
+                ForEach(events) { event in
+                    PointMark(
+                        x: .value("Time", event.point.x),
+                        y: .value("Value", event.point.y)
+                    )
+                    .symbol {
+                        event.side == "BACK" ?
+                        Image(systemName: "arrow.down").foregroundColor(.red) :
+                        Image(systemName: "arrow.up").foregroundColor(.yellow)
+                    }
+                }
+            }
+            .chartYScale(domain: verticalDomain)
+            .chartXScale(domain: horizontalDomain)
+            .chartYAxisLabel(chartGroup.name)
+            .chartOverlay { proxy in
+                ZoomingOverlay(proxy: proxy, onZoom: onZoom)
+            }
+        }
     }
 }
 
 struct ContentView: View {
     @State private var message: Message?
     @State private var isImporting: Bool = false
-    @State private var bounds: Dictionary<AxisType, (Double?, Double?)> = Dictionary()
+    @State private var horizontalBounds: (Double?, Double?) = (nil, nil)
+    @State private var verticalBoundsPerChart: [String: (Double?, Double?)] = [:]
 
     var horizontalDomain: ClosedRange<Double> {
-        return domain(axis: .Horizontal)
-    }
-
-    var verticalDomain: ClosedRange<Double> {
-        return domain(axis: .Vertical)
+        guard let message = message else { return 0...1 }
+        
+        var (min, max) = horizontalBounds
+        if min == nil || max == nil {
+            for chart in message.charts {
+                for (_, series) in chart.data {
+                    for point in series {
+                        if min == nil || point.x < min! { min = point.x }
+                        if max == nil || point.x > max! { max = point.x }
+                    }
+                }
+            }
+        }
+        return (min ?? 0.0)...(max ?? 1.0)
     }
 
     var body: some View {
         VStack {
             if let message = message {
-                Chart {
-                    ForEach(message.data.elements, id: \.key) { name, series in
-                        ForEach (series) { point in
-                            LineMark(
-                                x: .value("Time", point.x),
-                                y: .value("Value", point.y)
+                ScrollView {
+                    VStack(spacing: 20) {
+                        ForEach(Array(message.charts.enumerated()), id: \.element.id) { index, chartGroup in
+                            let chartEvents = message.events.filter { $0.chartIndex == index || ($0.chartIndex == nil && index == 0) }
+                            
+                            SingleChartView(
+                                chartGroup: chartGroup,
+                                events: chartEvents,
+                                horizontalDomain: horizontalDomain,
+                                verticalBounds: verticalBoundsPerChart[chartGroup.name] ?? (nil, nil),
+                                onZoom: { lowX, highX, lowY, highY in
+                                    horizontalBounds = (lowX, highX)
+                                    verticalBoundsPerChart[chartGroup.name] = (lowY, highY)
+                                }
                             )
-                            .foregroundStyle(by: .value("Name", name))
-                        }
-                        .interpolationMethod(.stepEnd)
-                    }
-
-                    ForEach(message.events) { event in
-                        PointMark(
-                            x: .value("Time", event.point.x),
-                            y: .value("Value", event.point.y)
-                        )
-                        .symbol {
-                            event.side == "BACK" ?
-                            Image(systemName: "arrow.down").foregroundColor(.red) :
-                            Image(systemName: "arrow.up").foregroundColor(.yellow)
+                            .frame(minHeight: 200)
                         }
                     }
-                }
-                .chartYScale(domain: verticalDomain)
-                .chartXScale(domain: horizontalDomain)
-                .chartYAxisLabel("Price")
-                .chartXAxisLabel("Time")
-                .chartOverlay { proxy in
-                    ZoomingOverlay(proxy: proxy, bounds: $bounds)
+                    .padding()
                 }
             } else {
                 if #available(iOS 17.0, macOS 14.0, *) {
@@ -162,7 +231,8 @@ struct ContentView: View {
             if message != nil {
                 ToolbarItem(placement: .automatic) {
                     Button("Reset Zoom") {
-                        bounds.removeAll()
+                        horizontalBounds = (nil, nil)
+                        verticalBoundsPerChart.removeAll()
                     }
                 }
             }
@@ -193,30 +263,16 @@ struct ContentView: View {
         do {
             let data = try Data(contentsOf: url)
             let decodedMessage = try JSONDecoder().decode(Message.self, from: data)
+            print("Loaded \(decodedMessage.charts.count) charts:")
+            for chart in decodedMessage.charts {
+                print("  - '\(chart.name)' with \(chart.data.count) series")
+            }
             self.message = decodedMessage
-            self.bounds.removeAll()
+            self.horizontalBounds = (nil, nil)
+            self.verticalBoundsPerChart.removeAll()
         } catch {
             print("Error decoding: \(error)")
         }
-    }
-
-    func domain(axis: AxisType) -> ClosedRange<Double> {
-        guard let message = message else { return 0...1 }
-
-        var (min, max) = bounds[axis] ?? (nil, nil)
-        if min == nil || max == nil {
-            for (_, series) in message.data {
-                for point in series {
-                    let val = (axis == .Horizontal) ? point.x : point.y
-                    if min == nil || val < min! { min = val }
-                    if max == nil || val > max! { max = val }
-                }
-            }
-        }
-        // Fallback if min/max still nil (empty data)
-        let safeMin = min ?? 0.0
-        let safeMax = max ?? 1.0
-        return safeMin...safeMax
     }
 }
 
