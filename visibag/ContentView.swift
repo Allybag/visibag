@@ -71,7 +71,8 @@ struct PartialKeyColors {
 struct ZoomingOverlay: View {
     let proxy: ChartProxy
     let onZoom: (Double, Double, Double, Double) -> Void
-    
+    let onTap: (Double) -> Void
+
     @State private var dragStart: CGPoint?
     @State private var dragCurrent: CGPoint?
 
@@ -89,17 +90,22 @@ struct ZoomingOverlay: View {
                                 let origin = geometry[proxy.plotFrame!].origin
                                 let (startX, startY) = coords(location: value.startLocation, origin: origin)
                                 let (endX, endY) = coords(location: value.location, origin: origin)
-                                
+
                                 let (lowX, highX) = extendedRange(start: startX, end: endX)
                                 let (lowY, highY) = extendedRange(start: startY, end: endY)
-                                
+
                                 onZoom(lowX, highX, lowY, highY)
-                                
+
                                 dragStart = nil
                                 dragCurrent = nil
                             }
                     )
-                
+                    .onTapGesture { location in
+                        let origin = geometry[proxy.plotFrame!].origin
+                        let (x, _) = coords(location: location, origin: origin)
+                        onTap(x)
+                    }
+
                 if let start = dragStart, let current = dragCurrent {
                     let rect = CGRect(
                         x: min(start.x, current.x),
@@ -107,7 +113,7 @@ struct ZoomingOverlay: View {
                         width: abs(current.x - start.x),
                         height: abs(current.y - start.y)
                     )
-                    
+
                     Rectangle()
                         .fill(Color.blue.opacity(0.15))
                         .overlay(
@@ -196,13 +202,36 @@ struct SingleChartView: View {
     let enabledKeys: Set<String>
     let colorForKey: (String) -> Color
     let allPartialKeys: [String]
+    let cursorX: Double?
     let onZoom: (Double, Double, Double, Double) -> Void
-    
+    let onTap: (Double) -> Void
+
     var filteredData: [(name: String, series: [Point])] {
         chartGroup.data.keys.sorted().compactMap { name in
             let key = partialKey(from: name)
             guard enabledKeys.contains(key) else { return nil }
             return (name: name, series: chartGroup.data[name]!)
+        }
+    }
+
+    func valueAtCursor(series: [Point], x: Double) -> Double? {
+        // Find the last point with x <= cursor (step interpolation)
+        var result: Double?
+        for point in series {
+            if point.x <= x {
+                result = point.y
+            } else {
+                break
+            }
+        }
+        return result
+    }
+
+    var cursorValues: [(name: String, value: Double)] {
+        guard let x = cursorX else { return [] }
+        return filteredData.compactMap { name, series in
+            guard let value = valueAtCursor(series: series, x: x) else { return nil }
+            return (name: name, value: value)
         }
     }
     
@@ -230,13 +259,29 @@ struct SingleChartView: View {
             Text(chartGroup.name)
                 .font(.headline)
                 .foregroundColor(.secondary)
-            
+
+            if !cursorValues.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(cursorValues, id: \.name) { name, value in
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(colorForKey(partialKey(from: name)))
+                                    .frame(width: 8, height: 8)
+                                Text("\(name): \(value, specifier: "%.2f")")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                }
+            }
+
             Chart {
                 ForEach(filteredData, id: \.name) { name, series in
                     let key = partialKey(from: name)
                     let suffix = seriesSuffix(from: name)
                     let suffixIndex = suffixOrder(for: chartGroup, suffix: suffix)
-                    
+
                     ForEach(series) { point in
                         LineMark(
                             x: .value("Time", point.x),
@@ -248,7 +293,7 @@ struct SingleChartView: View {
                     }
                     .interpolationMethod(.stepEnd)
                 }
-                
+
                 ForEach(events) { event in
                     PointMark(
                         x: .value("Time", event.point.x),
@@ -260,6 +305,12 @@ struct SingleChartView: View {
                         Image(systemName: "arrow.up").foregroundColor(.yellow)
                     }
                 }
+
+                if let x = cursorX {
+                    RuleMark(x: .value("Cursor", x))
+                        .foregroundStyle(.gray.opacity(0.7))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 3]))
+                }
             }
             .chartYScale(domain: verticalDomain)
             .chartXScale(domain: horizontalDomain)
@@ -267,7 +318,7 @@ struct SingleChartView: View {
             .chartLegend(.hidden)
             .chartForegroundStyleScale(domain: allPartialKeys, range: allPartialKeys.map { colorForKey($0) })
             .chartOverlay { proxy in
-                ZoomingOverlay(proxy: proxy, onZoom: onZoom)
+                ZoomingOverlay(proxy: proxy, onZoom: onZoom, onTap: onTap)
             }
         }
     }
@@ -280,6 +331,7 @@ struct ContentView: View {
     @State private var verticalBoundsPerChart: [String: (Double?, Double?)] = [:]
     @State private var partialKeyColors = PartialKeyColors()
     @State private var enabledPartialKeys: Set<String> = []
+    @State private var cursorX: Double?
 
     var horizontalDomain: ClosedRange<Double> {
         guard let message = message else { return 0...1 }
@@ -327,9 +379,13 @@ struct ContentView: View {
                                 enabledKeys: enabledPartialKeys,
                                 colorForKey: { partialKeyColors.color(for: $0) },
                                 allPartialKeys: allPartialKeys,
+                                cursorX: cursorX,
                                 onZoom: { lowX, highX, lowY, highY in
                                     horizontalBounds = (lowX, highX)
                                     verticalBoundsPerChart[chartGroup.name] = (lowY, highY)
+                                },
+                                onTap: { x in
+                                    cursorX = x
                                 }
                             )
                             .frame(minHeight: 200)
@@ -350,9 +406,10 @@ struct ContentView: View {
             }
             if message != nil {
                 ToolbarItem(placement: .automatic) {
-                    Button("Reset Zoom") {
+                    Button("Reset") {
                         horizontalBounds = (nil, nil)
                         verticalBoundsPerChart.removeAll()
+                        cursorX = nil
                     }
                 }
             }
