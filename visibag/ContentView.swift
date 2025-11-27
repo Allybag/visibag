@@ -105,6 +105,10 @@ struct SingleChartView: View {
         if min == nil || max == nil {
             for (_, series) in chartGroup.data {
                 for point in series {
+                    // Only consider points within the visible horizontal range
+                    guard point.x >= horizontalDomain.lowerBound && point.x <= horizontalDomain.upperBound else {
+                        continue
+                    }
                     if min == nil || point.y < min! { min = point.y }
                     if max == nil || point.y > max! { max = point.y }
                 }
@@ -112,7 +116,8 @@ struct SingleChartView: View {
         }
         let safeMin = min ?? 0.0
         let safeMax = max ?? 1.0
-        return safeMin...safeMax
+        let padding = (safeMax - safeMin) * 0.05
+        return (safeMin - padding)...(safeMax + padding)
     }
     
     var body: some View {
