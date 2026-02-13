@@ -176,9 +176,77 @@ func seriesSuffix(from seriesName: String) -> String {
     return components.dropFirst().joined(separator: " ")
 }
 
-func suffixOrder(for chartGroup: ChartGroup, suffix: String) -> Int {
-    let allSuffixes = Array(Set(chartGroup.data.keys.map { seriesSuffix(from: $0) })).sorted()
-    return allSuffixes.firstIndex(of: suffix) ?? 0
+// Binary search helpers for sorted arrays
+
+func lowerBound(in points: [Point], x: Double) -> Int {
+    var lo = 0, hi = points.count
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if points[mid].x < x { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
+}
+
+func upperBound(in points: [Point], x: Double) -> Int {
+    var lo = 0, hi = points.count
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if points[mid].x <= x { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
+}
+
+func sliceToRange(points: [Point], low: Double, high: Double) -> [Point] {
+    var startIdx = lowerBound(in: points, x: low)
+    if startIdx > 0 { startIdx -= 1 } // include one before for step interpolation
+    let endIdx = min(upperBound(in: points, x: high) + 1, points.count)
+    guard startIdx < endIdx else { return [] }
+    return Array(points[startIdx..<endIdx])
+}
+
+func downsample(points: [Point], to maxPoints: Int) -> [Point] {
+    guard points.count > maxPoints else { return points }
+    let bucketCount = maxPoints / 2
+    let bucketSize = Double(points.count) / Double(bucketCount)
+    var result: [Point] = []
+    result.reserveCapacity(maxPoints)
+    for b in 0..<bucketCount {
+        let start = Int(Double(b) * bucketSize)
+        let end = min(Int(Double(b + 1) * bucketSize), points.count)
+        guard start < end else { continue }
+        var minPoint = points[start]
+        var maxPoint = points[start]
+        for i in start..<end {
+            if points[i].y < minPoint.y { minPoint = points[i] }
+            if points[i].y > maxPoint.y { maxPoint = points[i] }
+        }
+        if minPoint.x <= maxPoint.x {
+            result.append(minPoint)
+            if minPoint.x != maxPoint.x { result.append(maxPoint) }
+        } else {
+            result.append(maxPoint)
+            if minPoint.x != maxPoint.x { result.append(minPoint) }
+        }
+    }
+    return result
+}
+
+func lowerBoundDouble(in values: [Double], target: Double) -> Int {
+    var lo = 0, hi = values.count
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if values[mid] < target { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
+}
+
+func upperBoundDouble(in values: [Double], target: Double) -> Int {
+    var lo = 0, hi = values.count
+    while lo < hi {
+        let mid = (lo + hi) / 2
+        if values[mid] <= target { lo = mid + 1 } else { hi = mid }
+    }
+    return lo
 }
 
 struct LineStyles {
@@ -210,27 +278,26 @@ struct SingleChartView: View {
         chartGroup.data.keys.sorted().compactMap { name in
             let key = partialKey(from: name)
             guard enabledKeys.contains(key) else { return nil }
-            return (name: name, series: chartGroup.data[name]!)
+            let allPoints = chartGroup.data[name]!
+            let visible = sliceToRange(points: allPoints, low: horizontalDomain.lowerBound, high: horizontalDomain.upperBound)
+            let downsampled = downsample(points: visible, to: 2000)
+            return (name: name, series: downsampled)
         }
     }
 
     func valueAtCursor(series: [Point], x: Double) -> Double? {
-        // Find the last point with x <= cursor (step interpolation)
-        var result: Double?
-        for point in series {
-            if point.x <= x {
-                result = point.y
-            } else {
-                break
-            }
-        }
-        return result
+        // Binary search for last point with x <= cursor (step interpolation)
+        let idx = upperBound(in: series, x: x)
+        guard idx > 0 else { return nil }
+        return series[idx - 1].y
     }
 
     var cursorValues: [(name: String, value: Double)] {
         guard let x = cursorX else { return [] }
-        return filteredData.compactMap { name, series in
-            guard let value = valueAtCursor(series: series, x: x) else { return nil }
+        return chartGroup.data.keys.sorted().compactMap { name in
+            let key = partialKey(from: name)
+            guard enabledKeys.contains(key) else { return nil }
+            guard let value = valueAtCursor(series: chartGroup.data[name]!, x: x) else { return nil }
             return (name: name, value: value)
         }
     }
@@ -254,7 +321,17 @@ struct SingleChartView: View {
         return (safeMin - padding)...(safeMax + padding)
     }
     
+    var suffixOrders: [String: Int] {
+        let allSuffixes = Array(Set(chartGroup.data.keys.map { seriesSuffix(from: $0) })).sorted()
+        var map: [String: Int] = [:]
+        for (index, suffix) in allSuffixes.enumerated() {
+            map[suffix] = index
+        }
+        return map
+    }
+
     var body: some View {
+        let cachedSuffixOrders = suffixOrders
         VStack(alignment: .leading, spacing: 4) {
             Text(chartGroup.name)
                 .font(.headline)
@@ -280,7 +357,7 @@ struct SingleChartView: View {
                 ForEach(filteredData, id: \.name) { name, series in
                     let key = partialKey(from: name)
                     let suffix = seriesSuffix(from: name)
-                    let suffixIndex = suffixOrder(for: chartGroup, suffix: suffix)
+                    let suffixIndex = cachedSuffixOrders[suffix] ?? 0
 
                     ForEach(series) { point in
                         LineMark(
@@ -336,9 +413,8 @@ struct ContentView: View {
     var horizontalDomain: ClosedRange<Double> {
         var (min, max) = horizontalBounds
         if min == nil || max == nil {
-            let points = sortedDataPoints
-            if min == nil { min = points.first }
-            if max == nil { max = points.last }
+            if min == nil { min = cachedSortedDataPoints.first }
+            if max == nil { max = cachedSortedDataPoints.last }
         }
         return (min ?? 0.0)...(max ?? 1.0)
     }
@@ -347,8 +423,13 @@ struct ContentView: View {
         partialKeyColors.allKeys
     }
 
-    var sortedDataPoints: [Double] {
-        guard let message = message else { return [] }
+    @State private var cachedSortedDataPoints: [Double] = []
+
+    func updateSortedDataPoints() {
+        guard let message = message else {
+            cachedSortedDataPoints = []
+            return
+        }
         var xValues = Set<Double>()
         for chart in message.charts {
             for (name, series) in chart.data {
@@ -358,21 +439,26 @@ struct ContentView: View {
                 }
             }
         }
-        return xValues.sorted()
+        cachedSortedDataPoints = xValues.sorted()
     }
 
     func moveCursor(forward: Bool) {
         guard let current = cursorX else { return }
-        let points = sortedDataPoints
+        let points = cachedSortedDataPoints
         guard !points.isEmpty else { return }
 
+        let domainLow = horizontalDomain.lowerBound
+        let domainHigh = horizontalDomain.upperBound
+
         if forward {
-            if let next = points.first(where: { $0 > current }) {
-                cursorX = next
+            let idx = upperBoundDouble(in: points, target: current)
+            if idx < points.count && points[idx] <= domainHigh {
+                cursorX = points[idx]
             }
         } else {
-            if let prev = points.last(where: { $0 < current }) {
-                cursorX = prev
+            let idx = lowerBoundDouble(in: points, target: current)
+            if idx > 0 && points[idx - 1] >= domainLow {
+                cursorX = points[idx - 1]
             }
         }
     }
@@ -471,6 +557,9 @@ struct ContentView: View {
                 print("Error importing file: \(error.localizedDescription)")
             }
         }
+        .onChange(of: enabledPartialKeys) { _, _ in
+            updateSortedDataPoints()
+        }
     }
 
     func loadData(from url: URL) {
@@ -503,6 +592,7 @@ struct ContentView: View {
                     self.partialKeyColors.buildColors(for: keys.sorted())
                     self.enabledPartialKeys = keys
                     self.message = decodedMessage
+                    self.updateSortedDataPoints()
                 }
 
             } catch {
