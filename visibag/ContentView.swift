@@ -334,25 +334,47 @@ struct ContentView: View {
     @State private var cursorX: Double?
 
     var horizontalDomain: ClosedRange<Double> {
-        guard let message = message else { return 0...1 }
-        
         var (min, max) = horizontalBounds
         if min == nil || max == nil {
-            for chart in message.charts {
-                for (name, series) in chart.data {
-                    guard enabledPartialKeys.contains(partialKey(from: name)) else { continue }
-                    for point in series {
-                        if min == nil || point.x < min! { min = point.x }
-                        if max == nil || point.x > max! { max = point.x }
-                    }
-                }
-            }
+            let points = sortedDataPoints
+            if min == nil { min = points.first }
+            if max == nil { max = points.last }
         }
         return (min ?? 0.0)...(max ?? 1.0)
     }
     
     var allPartialKeys: [String] {
         partialKeyColors.allKeys
+    }
+
+    var sortedDataPoints: [Double] {
+        guard let message = message else { return [] }
+        var xValues = Set<Double>()
+        for chart in message.charts {
+            for (name, series) in chart.data {
+                guard enabledPartialKeys.contains(partialKey(from: name)) else { continue }
+                for point in series {
+                    xValues.insert(point.x)
+                }
+            }
+        }
+        return xValues.sorted()
+    }
+
+    func moveCursor(forward: Bool) {
+        guard let current = cursorX else { return }
+        let points = sortedDataPoints
+        guard !points.isEmpty else { return }
+
+        if forward {
+            if let next = points.first(where: { $0 > current }) {
+                cursorX = next
+            }
+        } else {
+            if let prev = points.last(where: { $0 < current }) {
+                cursorX = prev
+            }
+        }
     }
 
     var body: some View {
@@ -427,6 +449,15 @@ struct ContentView: View {
             }
         }
         .padding()
+        .focusable()
+        .onKeyPress(.leftArrow) {
+            moveCursor(forward: false)
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            moveCursor(forward: true)
+            return .handled
+        }
         .fileImporter(
             isPresented: $isImporting,
             allowedContentTypes: [.json],
@@ -464,12 +495,13 @@ struct ContentView: View {
                 }
 
                 // Update UI on main thread
+                let keys = allKeys
                 await MainActor.run {
                     self.horizontalBounds = (nil, nil)
                     self.verticalBoundsPerChart.removeAll()
                     self.partialKeyColors = PartialKeyColors()
-                    self.partialKeyColors.buildColors(for: allKeys.sorted())
-                    self.enabledPartialKeys = allKeys
+                    self.partialKeyColors.buildColors(for: keys.sorted())
+                    self.enabledPartialKeys = keys
                     self.message = decodedMessage
                 }
 
