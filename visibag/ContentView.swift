@@ -45,13 +45,13 @@ func partialKey(from seriesName: String) -> String {
 
 struct PartialKeyColors {
     private var colorMap: [String: Color] = [:]
-    
+
     private let palette: [Color] = [
         .blue, .red, .green, .orange, .purple,
-        .cyan, .pink, .yellow, .mint, .indigo,
+        .cyan, .gray, .yellow, .mint, .indigo,
         .brown, .teal
     ]
-    
+
     mutating func buildColors(for keys: [String]) {
         colorMap.removeAll()
         for (index, key) in keys.enumerated() {
@@ -148,21 +148,27 @@ struct LegendView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 16) {
                 ForEach(partialKeys, id: \.self) { key in
-                    Button {
-                        if enabledKeys.contains(key) {
-                            enabledKeys.remove(key)
+                    HStack(spacing: 6) {
+                        Image(systemName: enabledKeys.contains(key) ? "checkmark.square.fill" : "square")
+                            .foregroundColor(colorForKey(key))
+                        Text(key)
+                            .foregroundColor(.primary)
+                    }
+                    .onTapGesture {
+                        if NSEvent.modifierFlags.contains(.command) {
+                            if enabledKeys == [key] {
+                                enabledKeys = Set(partialKeys)
+                            } else {
+                                enabledKeys = [key]
+                            }
                         } else {
-                            enabledKeys.insert(key)
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: enabledKeys.contains(key) ? "checkmark.square.fill" : "square")
-                                .foregroundColor(colorForKey(key))
-                            Text(key)
-                                .foregroundColor(.primary)
+                            if enabledKeys.contains(key) {
+                                enabledKeys.remove(key)
+                            } else {
+                                enabledKeys.insert(key)
+                            }
                         }
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal)
@@ -409,6 +415,7 @@ struct ContentView: View {
     @State private var partialKeyColors = PartialKeyColors()
     @State private var enabledPartialKeys: Set<String> = []
     @State private var cursorX: Double?
+    @State private var viewHistory: [(horizontalBounds: (Double?, Double?), verticalBoundsPerChart: [String: (Double?, Double?)])] = []
 
     var horizontalDomain: ClosedRange<Double> {
         var (min, max) = horizontalBounds
@@ -440,6 +447,10 @@ struct ContentView: View {
             }
         }
         cachedSortedDataPoints = xValues.sorted()
+    }
+
+    func saveState() {
+        viewHistory.append((horizontalBounds: horizontalBounds, verticalBoundsPerChart: verticalBoundsPerChart))
     }
 
     func moveCursor(forward: Bool) {
@@ -489,6 +500,7 @@ struct ContentView: View {
                                 allPartialKeys: allPartialKeys,
                                 cursorX: cursorX,
                                 onZoom: { lowX, highX, lowY, highY in
+                                    saveState()
                                     horizontalBounds = (lowX, highX)
                                     verticalBoundsPerChart[chartGroup.name] = (lowY, highY)
                                 },
@@ -516,12 +528,23 @@ struct ContentView: View {
                 if cursorX != nil {
                     ToolbarItem(placement: .automatic) {
                         Button("Cut Left") {
+                            saveState()
                             horizontalBounds.0 = cursorX
                         }
                     }
                     ToolbarItem(placement: .automatic) {
                         Button("Cut Right") {
+                            saveState()
                             horizontalBounds.1 = cursorX
+                        }
+                    }
+                }
+                if !viewHistory.isEmpty {
+                    ToolbarItem(placement: .automatic) {
+                        Button("Undo") {
+                            let previous = viewHistory.removeLast()
+                            horizontalBounds = previous.horizontalBounds
+                            verticalBoundsPerChart = previous.verticalBoundsPerChart
                         }
                     }
                 }
@@ -530,6 +553,7 @@ struct ContentView: View {
                         horizontalBounds = (nil, nil)
                         verticalBoundsPerChart.removeAll()
                         cursorX = nil
+                        viewHistory.removeAll()
                     }
                 }
             }
@@ -542,6 +566,13 @@ struct ContentView: View {
         }
         .onKeyPress(.rightArrow) {
             moveCursor(forward: true)
+            return .handled
+        }
+        .onKeyPress("u") {
+            guard !viewHistory.isEmpty else { return .ignored }
+            let previous = viewHistory.removeLast()
+            horizontalBounds = previous.horizontalBounds
+            verticalBoundsPerChart = previous.verticalBoundsPerChart
             return .handled
         }
         .fileImporter(
@@ -588,6 +619,7 @@ struct ContentView: View {
                 await MainActor.run {
                     self.horizontalBounds = (nil, nil)
                     self.verticalBoundsPerChart.removeAll()
+                    self.viewHistory.removeAll()
                     self.partialKeyColors = PartialKeyColors()
                     self.partialKeyColors.buildColors(for: keys.sorted())
                     self.enabledPartialKeys = keys
